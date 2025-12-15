@@ -2,51 +2,17 @@ import React, { useState } from "react";
 import { useForm, FormProvider, useFormContext } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { motion } from "framer-motion";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Upload, FileText, Settings2, Send, Plus, Trash2 } from "lucide-react";
+import { Upload, FileText, Settings2, Plus, Trash2, X, Image as ImageIcon } from "lucide-react";
 
 // ——— Shared primitives ———
-function FormShell({ title, subtitle, onSubmit, children, defaultValues, schema }) {
-    const methods = useForm({ resolver: zodResolver(schema), defaultValues });
-    return (
-        <FormProvider {...methods}>
-            <motion.form
-                onSubmit={methods.handleSubmit(onSubmit)}
-                className="space-y-6"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.2 }}
-            >
-                <Card className="shadow-md">
-                    <CardHeader>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h2 className="text-xl font-semibold">{title}</h2>
-                                {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">{children}</CardContent>
-                    <CardFooter className="flex items-center justify-end gap-2">
-                        <Button type="reset" variant="outline" onClick={() => methods.reset()}>Reset</Button>
-                        <Button type="submit" className="gap-2">
-                            <Send className="h-4 w-4" /> Submit
-                        </Button>
-                    </CardFooter>
-                </Card>
-            </motion.form>
-        </FormProvider>
-    );
-}
-
 function FormRow({ label, hint, htmlFor, children, required = false }) {
     return (
         <div className="grid gap-2">
@@ -79,9 +45,6 @@ function FieldError({ name }: { name: string }) {
 
 // ——— Schemas ———
 const examTemplateSchema = z.object({
-    title: z.string().min(3, "Naslov mora imati barem 3 znaka"),
-    instructions: z.string().min(10, "Dodajte upute / tekst zadataka (min 10 znakova)"),
-    allowAttachments: z.boolean().default(false),
     attachment: z
         .any()
         .optional()
@@ -102,15 +65,6 @@ const rubricSchema = z.object({
     useLLMAssist: z.boolean().default(true),
 });
 
-const submissionSchema = z.object({
-    studentId: z.string().min(1, "Obavezan unos"),
-    answers: z.string().min(5, "Unesite rješenja ili zalijepite tekst"),
-    attachScan: z
-        .any()
-        .optional()
-        .refine((f) => !f || (f instanceof FileList && f.length <= 1), "Dopustite max jednu datoteku"),
-    temperature: z.coerce.number().min(0).max(2).default(0.2),
-});
 
 // ——— API client stubs //TODO: implementirati realne API pozivove ———
 async function apiSaveTemplate(payload) {
@@ -125,84 +79,166 @@ async function apiSaveRubric(payload) {
     return { id: crypto.randomUUID(), ...payload };
 }
 
-async function apiGrade(payload) {
-    await wait(800);
-    console.log("/api/grade(openai) ->", payload);
-    // Dummy grading output (imitacija odgovora backend-a)
-    const awarded = payload.rubric?.criteria?.reduce((acc, c) => acc + Math.round(c.maxPoints * 0.7), 0) ?? 0;
-    return {
-        total: awarded,
-        perCriterion: payload.rubric?.criteria?.map((c) => ({ id: c.id, points: Math.round(c.maxPoints * 0.7), feedback: `Auto feedback for ${c.criterion}` })) ?? [],
-        model: "gpt-4o-mini", // TODO
-    };
-}
-
 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-
-// ——— Helper UI ———
-function EmptyDropzone({ id }) {
-    return (
-        <label htmlFor={id} className="flex items-center justify-between rounded-xl border border-dashed p-4 cursor-pointer hover:bg-muted/40">
-            <div className="flex items-center gap-3">
-                <Upload className="h-5 w-5" />
-                <div className="text-sm">
-                    <div className="font-medium">Dodajte datoteku (PDF/PNG/JPG)</div>
-                    <div className="text-muted-foreground">Povucite i ispustite ili kliknite za odabir</div>
-                </div>
-            </div>
-            <Input id={id} type="file" className="hidden" />
-        </label>
-    );
-}
 
 // ——— Forms ———
 function ExamTemplateForm() {
     const [saving, setSaving] = useState(false);
-    const methods = useForm({ resolver: zodResolver(examTemplateSchema), defaultValues: { title: "Kolokvij 1", instructions: "Zadatak 1: ...\nZadatak 2: ...", allowAttachments: true } });
-    const { register, watch, setValue } = methods;
-    const allowAttachments = watch("allowAttachments");
+    const [uploadedImages, setUploadedImages] = useState<Array<{ id: string; file: File; preview: string }>>([]);
+    const methods = useForm({ resolver: zodResolver(examTemplateSchema), defaultValues: {} });
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files) return;
+
+        Array.from(files).forEach((file) => {
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setUploadedImages((prev) => [
+                        ...prev,
+                        { id: crypto.randomUUID(), file, preview: reader.result as string }
+                    ]);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        // Reset input
+        e.target.value = '';
+    };
+
+    const removeImage = (id: string) => {
+        setUploadedImages((prev) => prev.filter((img) => img.id !== id));
+    };
 
     async function onSubmit(values) {
         setSaving(true);
-        const payload = { ...values, attachment: undefined };
+        const payload = { ...values, images: uploadedImages.map(img => img.file) };
         await apiSaveTemplate(payload);
         setSaving(false);
-        alert("Predložak spremljen");
+        alert("Referentni materijali spremljeni");
+        setUploadedImages([]);
         methods.reset(values);
     }
 
     return (
         <FormProvider {...methods}>
             <form onSubmit={methods.handleSubmit(onSubmit)} className="space-y-4">
-                <FormRow label="Naslov ispita" htmlFor="title" required>
-                    <Input id="title" placeholder="npr. Kolokvij 1" {...register("title")} />
-                    <FieldError name="title" />
-                </FormRow>
+                <Card className="border-dashed bg-muted/30">
+                    <CardContent className="pt-6">
+                        <div className="space-y-4">
+                            <div className="flex items-start gap-3">
+                                <div className="rounded-lg bg-primary/10 p-2">
+                                    <FileText className="h-5 w-5 text-primary" />
+                                </div>
+                                <div className="flex-1 space-y-2">
+                                    <h3 className="font-semibold text-lg">Referentni materijali (opcionalno)</h3>
+                                    <p className="text-sm text-muted-foreground leading-relaxed">
+                                        Pridjelite prijašnje ispravljene ispite iz istog predmeta kako bi AI model bolje razumio 
+                                        vaše zahtjeve i stil ocjenjivanja. Možete uploadati:
+                                    </p>
+                                    <ul className="text-sm text-muted-foreground space-y-1 ml-4">
+                                        <li className="flex items-start gap-2">
+                                            <span className="text-primary mt-0.5">•</span>
+                                            <span>Isti ispit koji ste već ocijenili (kao referencu za očekivane odgovore)</span>
+                                        </li>
+                                        <li className="flex items-start gap-2">
+                                            <span className="text-primary mt-0.5">•</span>
+                                            <span>Slične ispite sa sličnim zadacima i vašim komentarima</span>
+                                        </li>
+                                        <li className="flex items-start gap-2">
+                                            <span className="text-primary mt-0.5">•</span>
+                                            <span>Primjere ocjenjenih radova koji pokazuju vaše standarde</span>
+                                        </li>
+                                    </ul>
+                                    <p className="text-xs text-muted-foreground italic pt-2">
+                                        Model će analizirati vaš pristup ocjenjivanju i prilagoditi se vašim kriterijima i stilu povratnih informacija.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
 
-                <FormRow label="Tekst ispita / upute" htmlFor="instructions" required>
-                    <Textarea id="instructions" rows={8} placeholder="Zadatak 1: ...\nZadatak 2: ..." {...register("instructions")} />
-                    <FieldError name="instructions" />
-                </FormRow>
-
-                <div className="flex items-center justify-between rounded-lg border p-3">
+                <div className="rounded-xl border p-4 space-y-4">
                     <div>
-                        <Label className="text-sm">Dopusti priložene datoteke</Label>
-                        <p className="text-xs text-muted-foreground">Omogući upload skeniranog ispita ili PDF-a</p>
+                        <h3 className="font-medium mb-2">Upload referentnih materijala</h3>
+                        <p className="text-xs text-muted-foreground mb-4">
+                            Dodajte slike ispravljenih ispita (jedan ispit može imati više slika)
+                        </p>
                     </div>
-                    <Switch checked={allowAttachments} onCheckedChange={(v) => setValue("allowAttachments", v)} />
+
+                    <label htmlFor="reference-images" className="flex items-center justify-center rounded-xl border-2 border-dashed p-8 cursor-pointer hover:bg-muted/40 transition-colors">
+                        <div className="flex flex-col items-center gap-3 text-center">
+                            <div className="rounded-lg bg-primary/10 p-3">
+                                <Upload className="h-6 w-6 text-primary" />
+                            </div>
+                            <div>
+                                <div className="font-medium text-sm">Kliknite za odabir slika</div>
+                                <div className="text-xs text-muted-foreground mt-1">PNG, JPG ili JPEG (možete odabrati više slika odjednom)</div>
+                            </div>
+                        </div>
+                        <Input 
+                            id="reference-images" 
+                            type="file" 
+                            className="hidden" 
+                            multiple 
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                        />
+                    </label>
+
+                    {uploadedImages.length > 0 && (
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-sm font-medium">Uploadane slike ({uploadedImages.length})</Label>
+                                <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => setUploadedImages([])}
+                                    className="text-xs text-muted-foreground hover:text-destructive"
+                                >
+                                    Obriši sve
+                                </Button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                {uploadedImages.map((img, idx) => (
+                                    <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted/20">
+                                        <div className="aspect-square relative">
+                                            <img 
+                                                src={img.preview} 
+                                                alt={`Referentni materijal ${idx + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                <Button
+                                                    type="button"
+                                                    variant="destructive"
+                                                    size="icon"
+                                                    onClick={() => removeImage(img.id)}
+                                                    className="h-8 w-8"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div className="p-2 bg-background/95">
+                                            <p className="text-xs text-muted-foreground truncate">
+                                                {img.file.name}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {allowAttachments && (
-                    <div>
-                        <EmptyDropzone id="exam-attachment" />
-                        <FieldError name="attachment" />
-                    </div>
-                )}
-
                 <div className="flex justify-end gap-2 pt-2">
-                    <Button type="reset" variant="outline" onClick={() => methods.reset()}>Reset</Button>
+                    <Button type="reset" variant="outline" onClick={() => { methods.reset(); setUploadedImages([]); }}>Reset</Button>
                     <Button type="submit" disabled={saving} className="gap-2">
-                        <FileText className="h-4 w-4" /> {saving ? "Spremam..." : "Spremi predložak"}
+                        <FileText className="h-4 w-4" /> {saving ? "Spremam..." : "Spremi referentne materijale"}
                     </Button>
                 </div>
             </form>
@@ -213,10 +249,10 @@ function ExamTemplateForm() {
 function RubricForm() {
     const [saving, setSaving] = useState(false);
     const [criteria, setCriteria] = useState([
-        { id: crypto.randomUUID(), criterion: "Točnost rješenja", maxPoints: 50, guidance: "Provjeri ključne korake" },
-        { id: crypto.randomUUID(), criterion: "Obrazloženje / postupak", maxPoints: 30, guidance: "Boduj logiku i jasnoću" },
-        { id: crypto.randomUUID(), criterion: "Čistoća i format", maxPoints: 20, guidance: "Urednost, čitljivost" },
+        { id: crypto.randomUUID(), criterion: "1. Zadatak", maxPoints: 5, guidance: "Definicija potpunog sustava događaja (2 boda)\nFormula potpune vjerojatnosti (1 bod)\nDokaz formule (2 boda)" },
+        { id: crypto.randomUUID(), criterion: "2. Zadatak", maxPoints: 5, guidance: "Rastav na slučajeve i ispravno definirane sve oznake (2 boda)\nPrimjerna formule potpune vjerojatnosti (1 bod)\nIspravno izračunate vjerojatnosti za slučajeve i potpuno riješen zadatak (2 boda)" },
     ]);
+    const [uploadedImages, setUploadedImages] = useState<Array<{ id: string; file: File; preview: string }>>([]);
 
     const methods = useForm({
         resolver: zodResolver(rubricSchema),
@@ -246,26 +282,45 @@ function RubricForm() {
         setValue("globalMaxPoints", updated.reduce((a, c) => a + Number(c.maxPoints || 0), 0));
     };
 
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files) return;
+
+        Array.from(files).forEach((file) => {
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setUploadedImages((prev) => [
+                        ...prev,
+                        { id: crypto.randomUUID(), file, preview: reader.result as string }
+                    ]);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        // Reset input
+        e.target.value = '';
+    };
+
+    const removeImage = (id: string) => {
+        setUploadedImages((prev) => prev.filter((img) => img.id !== id));
+    };
+
     async function onSubmit(values) {
         setSaving(true);
-        await apiSaveRubric(values);
+        const payload = { ...values, images: uploadedImages.map(img => img.file) };
+        await apiSaveRubric(payload);
         setSaving(false);
-        alert("Rubrika spremljena");
+        alert("Ispit poslan na ocjenjivanje");
     }
 
     return (
         <FormProvider {...methods}>
             <form onSubmit={methods.handleSubmit(onSubmit)} className="space-y-4">
-                <FormRow label="Naziv rubrike" htmlFor="name" required>
-                    <Input id="name" placeholder="npr. Rubrika – Kolokvij 1" {...register("name")} />
-                    <FieldError name="name" />
-                </FormRow>
-
                 <div className="rounded-xl border p-4 space-y-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h3 className="font-medium">Kriteriji</h3>
-                            <p className="text-xs text-muted-foreground">Definirajte kriterije i maksimalne bodove</p>
+                            <p className="text-m text-muted-foreground">Definirajte kriterije i maksimalne bodove pojedinog zadatka</p>
                         </div>
                         <Button type="button" size="sm" variant="secondary" onClick={addCriterion} className="gap-1">
                             <Plus className="h-4 w-4" /> Dodaj kriterij
@@ -274,19 +329,20 @@ function RubricForm() {
 
                     <Separator />
 
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         {watch("criteria").map((c, idx) => (
-                            <div key={c.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
-                                <div className="md:col-span-4">
-                                    <Label className="text-xs">Kriterij</Label>
+                            <div key={c.id} className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                                    <div className="md:col-span-7">
+                                        <Label className="text-xs font-medium text-muted-foreground">Element ocjenjivanja</Label>
                                     <Input defaultValue={c.criterion} onChange={(e) => {
                                         const updated = [...watch("criteria")];
                                         updated[idx].criterion = e.target.value;
                                         setValue("criteria", updated);
                                     }} />
                                 </div>
-                                <div className="md:col-span-2">
-                                    <Label className="text-xs">Max bodova</Label>
+                                    <div className="md:col-span-3">
+                                        <Label className="text-xs font-medium text-muted-foreground">Max bodova</Label>
                                     <Input type="number" defaultValue={c.maxPoints} onChange={(e) => {
                                         const updated = [...watch("criteria")];
                                         updated[idx].maxPoints = Number(e.target.value);
@@ -294,131 +350,138 @@ function RubricForm() {
                                         setValue("globalMaxPoints", updated.reduce((a, c) => a + Number(c.maxPoints || 0), 0));
                                     }} />
                                 </div>
-                                <div className="md:col-span-5">
-                                    <Label className="text-xs">Smjernice</Label>
-                                    <Input defaultValue={c.guidance} onChange={(e) => {
+                                    <div className="md:col-span-2 flex items-end justify-end">
+                                        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => removeCriterion(c.id)}>
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <Label className="text-xs font-medium text-muted-foreground">Smjernice za ocjenjivanje</Label>
+                                    <Textarea 
+                                        rows={3}
+                                        placeholder="Opišite kriterije ocjenjivanja, što se očekuje za maksimalne bodove, česte greške..."
+                                        defaultValue={c.guidance} 
+                                        onChange={(e) => {
                                         const updated = [...watch("criteria")];
                                         updated[idx].guidance = e.target.value;
                                         setValue("criteria", updated);
-                                    }} />
-                                </div>
-                                <div className="md:col-span-1 flex items-end">
-                                    <Button type="button" variant="ghost" onClick={() => removeCriterion(c.id)}>
-                                        <Trash2 className="h-4 w-4" />
-                                    </Button>
+                                        }} 
+                                        className="mt-1 resize-y min-h-[80px]"
+                                    />
                                 </div>
                             </div>
                         ))}
                     </div>
+                </div>
 
-                    <div className="flex items-center justify-between rounded-lg border p-3">
+                <Separator className="my-6" />
+
+                <div className="rounded-xl border p-4 space-y-4">
+                    <div>
+                        <h3 className="font-medium mb-2">Upload ispita</h3>
+                        <p className="text-xs text-muted-foreground mb-4">
+                            Dodajte slike riješenog ispita (jedan ispit može imati više slika - po jedna za svaki zadatak)
+                        </p>
+                    </div>
+
+                    <label htmlFor="exam-images" className="flex items-center justify-center rounded-xl border-2 border-dashed p-8 cursor-pointer hover:bg-muted/40 transition-colors">
+                        <div className="flex flex-col items-center gap-3 text-center">
+                            <div className="rounded-lg bg-primary/10 p-3">
+                                <Upload className="h-6 w-6 text-primary" />
+                            </div>
                         <div>
-                            <Label className="text-sm">LLM asistirano bodovanje</Label>
-                            <p className="text-xs text-muted-foreground">Omogući prijedlog bodova i feedback-a</p>
+                                <div className="font-medium text-sm">Kliknite za odabir slika</div>
+                                <div className="text-xs text-muted-foreground mt-1">PNG, JPG ili JPEG (možete odabrati više slika odjednom)</div>
+                            </div>
                         </div>
-                        <Switch checked={!!useLLMAssist} onCheckedChange={(v) => setValue("useLLMAssist", v)} />
-                    </div>
-                </div>
+                        <Input 
+                            id="exam-images" 
+                            type="file" 
+                            className="hidden" 
+                            multiple 
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                        />
+                    </label>
 
-                <div className="flex items-center justify-end gap-3">
-                    <div className="text-sm text-muted-foreground">
-                        Max ukupno: <span className="font-medium">{watch("globalMaxPoints")}</span>
-                    </div>
-                    <Button type="submit" disabled={saving} className="gap-2">
-                        <Settings2 className="h-4 w-4" /> {saving ? "Spremam..." : "Spremi rubriku"}
-                    </Button>
-                </div>
-            </form>
-        </FormProvider>
-    );
-}
-
-function SubmissionsForm({ currentRubric }) {
-    const [grading, setGrading] = useState(false);
-    const [result, setResult] = useState(null);
-    const methods = useForm({ resolver: zodResolver(submissionSchema), defaultValues: { temperature: 0.2 } });
-    const { register, watch } = methods;
-
-    async function onSubmit(values) {
-        setGrading(true);
-        const payload = { submission: values, rubric: currentRubric };
-        const out = await apiGrade(payload);
-        setResult(out);
-        setGrading(false);
-    }
-
-    return (
-        <FormProvider {...methods}>
-            <form onSubmit={methods.handleSubmit(onSubmit)} className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                    <FormRow label="Student ID" htmlFor="studentId" required>
-                        <Input id="studentId" placeholder="npr. 00123" {...register("studentId")} />
-                        <FieldError name="studentId" />
-                    </FormRow>
-                    <FormRow label="Model temperature" htmlFor="temperature" hint="0–2 (stabilnost vs. kreativnost)">
-                        <Input id="temperature" type="number" step="0.1" min={0} max={2} {...register("temperature", { valueAsNumber: true })} />
-                        <FieldError name="temperature" />
-                    </FormRow>
-                </div>
-
-                <FormRow label="Rješenja / odgovori" htmlFor="answers" required>
-                    <Textarea id="answers" rows={10} placeholder={`Odgovor na zadatak 1...\nOdgovor na zadatak 2...`} {...register("answers")} />
-                    <FieldError name="answers" />
-                </FormRow>
-
-                <EmptyDropzone id="submission-scan" />
-
-                <div className="flex justify-end gap-2 pt-2">
-                    <Button type="submit" disabled={grading} className="gap-2">
-                        <Send className="h-4 w-4" /> {grading ? "Bodujem..." : "Pošalji na bodovanje"}
-                    </Button>
-                </div>
-
-                {result && (
-                    <Card className="mt-4">
-                        <CardHeader>
-                            <h3 className="font-semibold">Rezultat bodovanja</h3>
-                            <p className="text-sm text-muted-foreground">Model: {result.model}</p>
-                        </CardHeader>
-                        <CardContent className="space-y-2">
-                            <div className="text-sm">Ukupno bodova: <span className="font-semibold">{result.total}</span></div>
-                            <Separator />
-                            <div className="space-y-2">
-                                {result.perCriterion.map((pc) => (
-                                    <div key={pc.id} className="grid md:grid-cols-6 gap-2 text-sm">
-                                        <div className="md:col-span-2 font-medium">{currentRubric?.criteria?.find((c) => c.id === pc.id)?.criterion}</div>
-                                        <div className="md:col-span-1">+{pc.points}</div>
-                                        <div className="md:col-span-3 text-muted-foreground">{pc.feedback}</div>
+                    {uploadedImages.length > 0 && (
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-sm font-medium">Uploadane slike ({uploadedImages.length})</Label>
+                                <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => setUploadedImages([])}
+                                    className="text-xs text-muted-foreground hover:text-destructive"
+                                >
+                                    Obriši sve
+                                </Button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                {uploadedImages.map((img, idx) => (
+                                    <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted/20">
+                                        <div className="aspect-square relative">
+                                            <img 
+                                                src={img.preview} 
+                                                alt={`Ispit slika ${idx + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                <Button
+                                                    type="button"
+                                                    variant="destructive"
+                                                    size="icon"
+                                                    onClick={() => removeImage(img.id)}
+                                                    className="h-8 w-8"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div className="p-2 bg-background/95">
+                                            <p className="text-xs text-muted-foreground truncate">
+                                                {img.file.name}
+                                            </p>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
-                        </CardContent>
-                    </Card>
-                )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                    <div className="text-sm text-muted-foreground">
+                        Max ukupno: <span className="font-medium">{watch("globalMaxPoints")}</span>
+                    </div>
+                    <Button type="submit" disabled={saving || uploadedImages.length === 0} className="gap-2">
+                        <Settings2 className="h-4 w-4" /> {saving ? "Spremam..." : "Predaj na ocjenjivanje"}
+                    </Button>
+                </div>
             </form>
         </FormProvider>
     );
 }
 
+
 // ——— Main screen ———
 export default function AppGraderStudio() {
-    const [savedRubric, setSavedRubric] = useState(null);
-
     return (
         <div className="min-h-screen bg-background text-foreground p-4 md:p-8">
             <div className="mx-auto max-w-5xl space-y-6">
                 <header className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl md:text-3xl font-bold">AI Exam Grader</h1>
-                        <p className="text-sm text-muted-foreground">Automatski pregled i ispravljanje pismenih ispita – prototip</p>
+                        <p className="text-sm text-muted-foreground">Automatski pregled i ispravljanje pismenih ispita</p>
                     </div>
                 </header>
 
                 <Tabs defaultValue="templates" className="w-full">
-                    <TabsList className="grid grid-cols-3 w-full">
-                        <TabsTrigger value="templates" className="gap-2"><FileText className="h-4 w-4" /> Predlošci ispita</TabsTrigger>
-                        <TabsTrigger value="rubric" className="gap-2"><Settings2 className="h-4 w-4" /> Rubrika</TabsTrigger>
-                        <TabsTrigger value="submissions" className="gap-2"><Upload className="h-4 w-4" /> Predaje</TabsTrigger>
+                    <TabsList className="grid grid-cols-2 w-full">
+                        <TabsTrigger value="templates" className="gap-2"><FileText className="h-4 w-4" /> Referentni materijali</TabsTrigger>
+                        <TabsTrigger value="rubric" className="gap-2"><Settings2 className="h-4 w-4" /> Kriteriji i bodovanje</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="templates">
@@ -428,26 +491,8 @@ export default function AppGraderStudio() {
                     <TabsContent value="rubric">
                         <RubricForm />
                     </TabsContent>
-
-                    <TabsContent value="submissions">
-                        <SubmissionsForm currentRubric={savedRubric ?? DEFAULT_RUBRIC} />
-                    </TabsContent>
                 </Tabs>
-
-                <footer className="text-center text-xs text-muted-foreground pt-6">
-                    Napomena: Ovo je UI prototip. Nisu implementirane sve funkcionalnosti.
-                </footer>
             </div>
         </div>
     );
 }
-
-const DEFAULT_RUBRIC = {
-    name: "Rubrika – Demo",
-    globalMaxPoints: 100,
-    criteria: [
-        { id: "c1", criterion: "Točnost", maxPoints: 60, guidance: "Ispravnost rezultata" },
-        { id: "c2", criterion: "Postupak", maxPoints: 30, guidance: "Razumijevanje i logika" },
-        { id: "c3", criterion: "Prezentacija", maxPoints: 10, guidance: "Urednost" },
-    ],
-};
