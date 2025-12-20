@@ -8,12 +8,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Upload, FileText, Settings2, Plus, Trash2, X, Image as ImageIcon } from "lucide-react";
+import { 
+    Upload, FileText, Settings2, Plus, Trash2, 
+    CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp 
+} from "lucide-react";
+import type { GradingResult, TaskGrade, CriterionGrade } from "./types/grading";
 
-// ——— Shared primitives ———
-function FormRow({ label, hint, htmlFor, children, required = false }) {
+interface UploadedImage {
+    id: string;
+    file: File;
+    preview: string;
+}
+
+interface Criterion {
+    id: string;
+    criterion: string;
+    maxPoints: number;
+    guidance: string;
+}
+
+function FormRow({ label, hint, htmlFor, children, required = false }: {
+    label: string;
+    hint?: string;
+    htmlFor?: string;
+    children: React.ReactNode;
+    required?: boolean;
+}) {
     return (
         <div className="grid gap-2">
             <div className="flex items-center gap-2">
@@ -43,7 +64,6 @@ function FieldError({ name }: { name: string }) {
     );
 }
 
-// ——— Schemas ———
 const examTemplateSchema = z.object({
     attachment: z
         .any()
@@ -65,65 +85,266 @@ const rubricSchema = z.object({
     useLLMAssist: z.boolean().default(true),
 });
 
-
-// ——— API client stubs //TODO: implementirati realne API pozivove ———
-async function apiSaveTemplate(payload) {
-    await wait(400);
-    console.log("/api/templates ->", payload);
-    return { id: crypto.randomUUID(), ...payload };
+async function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 }
 
-async function apiSaveRubric(payload) {
-    await wait(400);
-    console.log("/api/rubrics ->", payload);
-    return { id: crypto.randomUUID(), ...payload };
+async function submitForGrading(
+    referenceImages: UploadedImage[],
+    criteria: Criterion[],
+    globalMaxPoints: number,
+    examImages: UploadedImage[]
+): Promise<{ success: boolean; data?: GradingResult; error?: { message: string } }> {
+    const encodedReferenceImages = await Promise.all(
+        referenceImages.map(async (img) => ({
+            id: img.id,
+            filename: img.file.name,
+            base64: await fileToBase64(img.file),
+            mimeType: img.file.type
+        }))
+    );
+
+    const encodedExamImages = await Promise.all(
+        examImages.map(async (img) => ({
+            id: img.id,
+            filename: img.file.name,
+            base64: await fileToBase64(img.file),
+            mimeType: img.file.type
+        }))
+    );
+
+    const payload = {
+        referenceImages: encodedReferenceImages.length > 0 ? encodedReferenceImages : undefined,
+        rubric: {
+            name: 'Kriteriji ocjenjivanja',
+            globalMaxPoints,
+            criteria: criteria.map(c => ({
+                id: c.id,
+                criterion: c.criterion,
+                maxPoints: c.maxPoints,
+                guidance: c.guidance || ''
+            }))
+        },
+        examImages: encodedExamImages
+    };
+
+    const response = await fetch('/api/grade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    return response.json();
 }
 
-const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+function TaskGradeCard({ grade, index }: { grade: TaskGrade; index: number }) {
+    const [expanded, setExpanded] = useState(true);
+    const percentage = grade.percentage;
+    const colorClass = percentage >= 80 ? 'text-green-600' : percentage >= 50 ? 'text-yellow-600' : 'text-red-600';
+    const bgClass = percentage >= 80 ? 'bg-green-50' : percentage >= 50 ? 'bg-yellow-50' : 'bg-red-50';
 
-// ——— Forms ———
-function ExamTemplateForm() {
-    const [saving, setSaving] = useState(false);
-    const [uploadedImages, setUploadedImages] = useState<Array<{ id: string; file: File; preview: string }>>([]);
+    return (
+        <Card className={`${bgClass} border-l-4 ${percentage >= 80 ? 'border-l-green-500' : percentage >= 50 ? 'border-l-yellow-500' : 'border-l-red-500'}`}>
+            <CardHeader className="pb-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <span className="text-lg font-bold">{grade.task_number}. zadatak</span>
+                        <span className={`font-semibold ${colorClass}`}>
+                            {grade.total_points}/{grade.max_points} bodova ({percentage}%)
+                        </span>
+                    </div>
+                    {expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                </div>
+            </CardHeader>
+            {expanded && (
+                <CardContent className="space-y-4">
+                    <div>
+                        <Label className="text-xs font-medium text-muted-foreground">Tekst zadatka</Label>
+                        <p className="text-sm mt-1 p-2 bg-white/50 rounded">{grade.task_text}</p>
+                    </div>
+                    <div>
+                        <Label className="text-xs font-medium text-muted-foreground">Studentov odgovor</Label>
+                        <p className="text-sm mt-1 p-2 bg-white/50 rounded font-mono whitespace-pre-wrap">
+                            {grade.student_answer || <span className="italic text-muted-foreground">Nema odgovora</span>}
+                        </p>
+                    </div>
+                    <div>
+                        <Label className="text-xs font-medium text-muted-foreground">Analiza</Label>
+                        <p className="text-sm mt-1 p-2 bg-white/50 rounded">{grade.analysis}</p>
+                    </div>
+                    
+                    {grade.criterion_grades && grade.criterion_grades.length > 0 && (
+                        <div>
+                            <Label className="text-xs font-medium text-muted-foreground">Bodovanje po kriterijima</Label>
+                            <div className="mt-2 space-y-2">
+                                {grade.criterion_grades.map((cg, idx) => (
+                                    <CriterionGradeRow key={idx} grade={cg} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="p-3 bg-white/70 rounded-lg">
+                        <p className="text-sm font-medium">{grade.feedback_summary}</p>
+                    </div>
+                </CardContent>
+            )}
+        </Card>
+    );
+}
+
+function CriterionGradeRow({ grade }: { grade: CriterionGrade }) {
+    return (
+        <div className="p-3 bg-white/50 rounded-lg text-sm">
+            <div className="flex items-center justify-between mb-2">
+                <span className="font-medium">{grade.criterion_name}</span>
+                <span className="font-semibold">{grade.awarded_points}/{grade.max_points}</span>
+            </div>
+            <p className="text-muted-foreground text-xs mb-2">{grade.justification}</p>
+            {grade.strengths && grade.strengths.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-1">
+                    {grade.strengths.map((s, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                            ✓ {s}
+                        </span>
+                    ))}
+                </div>
+            )}
+            {grade.improvements && grade.improvements.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                    {grade.improvements.map((s, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
+                            → {s}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function GradingResultsDisplay({ result, onReset }: { result: GradingResult; onReset: () => void }) {
+    const overallColor = result.overall_percentage >= 80 ? 'text-green-600' : 
+                         result.overall_percentage >= 50 ? 'text-yellow-600' : 'text-red-600';
+    const overallBg = result.overall_percentage >= 80 ? 'bg-green-100' : 
+                      result.overall_percentage >= 50 ? 'bg-yellow-100' : 'bg-red-100';
+
+    return (
+        <div className="space-y-6">
+            <Card className={`${overallBg} border-2`}>
+                <CardContent className="pt-6">
+                    <div className="text-center">
+                        <div className={`text-5xl font-bold ${overallColor} mb-2`}>
+                            {result.total_points}/{result.max_total_points}
+                        </div>
+                        <div className={`text-2xl font-semibold ${overallColor}`}>
+                            {result.overall_percentage}%
+                        </div>
+                        <p className="text-muted-foreground mt-4 max-w-2xl mx-auto">
+                            {result.overall_feedback}
+                        </p>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Rezultati po zadacima</h3>
+                {result.task_grades?.map((grade, idx) => (
+                    <TaskGradeCard key={idx} grade={grade} index={idx} />
+                ))}
+            </div>
+
+            {result.extraction && (
+                <Card>
+                    <CardHeader>
+                        <h4 className="font-medium">Informacije o ekstrakciji</h4>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                            <div>
+                                <span className="text-muted-foreground">Detektirani zadaci:</span>
+                                <span className="ml-2 font-medium">{result.extraction.total_tasks_detected}</span>
+                            </div>
+                            <div>
+                                <span className="text-muted-foreground">Pouzdanost:</span>
+                                <span className="ml-2 font-medium capitalize">{result.extraction.extraction_confidence}</span>
+                            </div>
+                            <div>
+                                <span className="text-muted-foreground">Model:</span>
+                                <span className="ml-2 font-medium">{result.model_used}</span>
+                            </div>
+                        </div>
+                        {result.extraction.unreadable_sections && result.extraction.unreadable_sections.length > 0 && (
+                            <div className="mt-3 p-2 bg-yellow-50 rounded text-sm">
+                                <span className="font-medium text-yellow-700">Nečitljivi dijelovi:</span>
+                                <ul className="list-disc list-inside mt-1 text-yellow-600">
+                                    {result.extraction.unreadable_sections.map((s, i) => (
+                                        <li key={i}>{s}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
+
+            <div className="flex justify-center">
+                <Button onClick={onReset} size="lg" variant="outline">
+                    Ocijeni novi ispit
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+function ExamTemplateForm({ onImagesChange }: { onImagesChange: (images: UploadedImage[]) => void }) {
+    const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
     const methods = useForm({ resolver: zodResolver(examTemplateSchema), defaultValues: {} });
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (!files) return;
 
+        const newImages: UploadedImage[] = [];
         Array.from(files).forEach((file) => {
             if (file.type.startsWith('image/')) {
                 const reader = new FileReader();
                 reader.onloadend = () => {
-                    setUploadedImages((prev) => [
-                        ...prev,
-                        { id: crypto.randomUUID(), file, preview: reader.result as string }
-                    ]);
+                    const newImg = { id: crypto.randomUUID(), file, preview: reader.result as string };
+                    newImages.push(newImg);
+                    setUploadedImages((prev) => {
+                        const updated = [...prev, newImg];
+                        onImagesChange(updated);
+                        return updated;
+                    });
                 };
                 reader.readAsDataURL(file);
             }
         });
-        // Reset input
         e.target.value = '';
     };
 
     const removeImage = (id: string) => {
-        setUploadedImages((prev) => prev.filter((img) => img.id !== id));
+        setUploadedImages((prev) => {
+            const updated = prev.filter((img) => img.id !== id);
+            onImagesChange(updated);
+            return updated;
+        });
     };
 
-    async function onSubmit(values) {
-        setSaving(true);
-        const payload = { ...values, images: uploadedImages.map(img => img.file) };
-        await apiSaveTemplate(payload);
-        setSaving(false);
-        alert("Referentni materijali spremljeni");
+    const clearAll = () => {
         setUploadedImages([]);
-        methods.reset(values);
-    }
+        onImagesChange([]);
+    };
 
     return (
         <FormProvider {...methods}>
-            <form onSubmit={methods.handleSubmit(onSubmit)} className="space-y-4">
+            <form className="space-y-4">
                 <Card className="border-dashed bg-muted/30">
                     <CardContent className="pt-6">
                         <div className="space-y-4">
@@ -196,7 +417,7 @@ function ExamTemplateForm() {
                                     type="button" 
                                     variant="ghost" 
                                     size="sm" 
-                                    onClick={() => setUploadedImages([])}
+                                    onClick={clearAll}
                                     className="text-xs text-muted-foreground hover:text-destructive"
                                 >
                                     Obriši sve
@@ -234,25 +455,25 @@ function ExamTemplateForm() {
                         </div>
                     )}
                 </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                    <Button type="reset" variant="outline" onClick={() => { methods.reset(); setUploadedImages([]); }}>Reset</Button>
-                    <Button type="submit" disabled={saving} className="gap-2">
-                        <FileText className="h-4 w-4" /> {saving ? "Spremam..." : "Spremi referentne materijale"}
-                    </Button>
-                </div>
             </form>
         </FormProvider>
     );
 }
 
-function RubricForm() {
+function RubricForm({ 
+    referenceImages, 
+    onGradingComplete 
+}: { 
+    referenceImages: UploadedImage[];
+    onGradingComplete: (result: GradingResult) => void;
+}) {
     const [saving, setSaving] = useState(false);
-    const [criteria, setCriteria] = useState([
+    const [error, setError] = useState<string | null>(null);
+    const [criteria, setCriteria] = useState<Criterion[]>([
         { id: crypto.randomUUID(), criterion: "1. Zadatak", maxPoints: 5, guidance: "Definicija potpunog sustava događaja (2 boda)\nFormula potpune vjerojatnosti (1 bod)\nDokaz formule (2 boda)" },
         { id: crypto.randomUUID(), criterion: "2. Zadatak", maxPoints: 5, guidance: "Rastav na slučajeve i ispravno definirane sve oznake (2 boda)\nPrimjerna formule potpune vjerojatnosti (1 bod)\nIspravno izračunate vjerojatnosti za slučajeve i potpuno riješen zadatak (2 boda)" },
     ]);
-    const [uploadedImages, setUploadedImages] = useState<Array<{ id: string; file: File; preview: string }>>([]);
+    const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
 
     const methods = useForm({
         resolver: zodResolver(rubricSchema),
@@ -264,19 +485,19 @@ function RubricForm() {
         },
     });
 
-    const { register, setValue, watch } = methods;
-    const useLLMAssist = watch("useLLMAssist");
+    const { setValue, watch } = methods;
+    const globalMaxPoints = watch("globalMaxPoints");
 
     const addCriterion = () => {
-        const next = { id: crypto.randomUUID(), criterion: "", maxPoints: 0, guidance: "" };
+        const next: Criterion = { id: crypto.randomUUID(), criterion: "", maxPoints: 0, guidance: "" };
         const updated = [...watch("criteria"), next];
         setCriteria(updated);
         setValue("criteria", updated);
         setValue("globalMaxPoints", updated.reduce((a, c) => a + Number(c.maxPoints || 0), 0));
     };
 
-    const removeCriterion = (id) => {
-        const updated = watch("criteria").filter((c) => c.id !== id);
+    const removeCriterion = (id: string) => {
+        const updated = watch("criteria").filter((c: Criterion) => c.id !== id);
         setCriteria(updated);
         setValue("criteria", updated);
         setValue("globalMaxPoints", updated.reduce((a, c) => a + Number(c.maxPoints || 0), 0));
@@ -298,7 +519,6 @@ function RubricForm() {
                 reader.readAsDataURL(file);
             }
         });
-        // Reset input
         e.target.value = '';
     };
 
@@ -306,17 +526,49 @@ function RubricForm() {
         setUploadedImages((prev) => prev.filter((img) => img.id !== id));
     };
 
-    async function onSubmit(values) {
+    async function onSubmit(values: any) {
+        if (uploadedImages.length === 0) {
+            setError("Morate uploadati barem jednu sliku ispita");
+            return;
+        }
+
         setSaving(true);
-        const payload = { ...values, images: uploadedImages.map(img => img.file) };
-        await apiSaveRubric(payload);
-        setSaving(false);
-        alert("Ispit poslan na ocjenjivanje");
+        setError(null);
+
+        try {
+            const result = await submitForGrading(
+                referenceImages,
+                values.criteria,
+                values.globalMaxPoints,
+                uploadedImages
+            );
+
+            if (result.success && result.data) {
+                onGradingComplete(result.data);
+            } else {
+                setError(result.error?.message || 'Došlo je do greške pri ocjenjivanju');
+            }
+        } catch (err: any) {
+            setError(err.message || 'Došlo je do greške pri slanju zahtjeva');
+        } finally {
+            setSaving(false);
+        }
     }
 
     return (
         <FormProvider {...methods}>
             <form onSubmit={methods.handleSubmit(onSubmit)} className="space-y-4">
+                {error && (
+                    <Card className="border-red-200 bg-red-50">
+                        <CardContent className="pt-4">
+                            <div className="flex items-center gap-2 text-red-700">
+                                <AlertCircle className="h-5 w-5" />
+                                <span>{error}</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
+
                 <div className="rounded-xl border p-4 space-y-4">
                     <div className="flex items-center justify-between">
                         <div>
@@ -330,7 +582,7 @@ function RubricForm() {
                     <Separator />
 
                     <div className="space-y-4">
-                        {watch("criteria").map((c, idx) => (
+                        {watch("criteria").map((c: Criterion, idx: number) => (
                             <div key={c.id} className="rounded-lg border bg-muted/20 p-4 space-y-3">
                                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
                                     <div className="md:col-span-7">
@@ -452,12 +704,33 @@ function RubricForm() {
                     )}
                 </div>
 
+                {referenceImages.length > 0 && (
+                    <Card className="border-green-200 bg-green-50">
+                        <CardContent className="pt-4">
+                            <div className="flex items-center gap-2 text-green-700">
+                                <CheckCircle2 className="h-5 w-5" />
+                                <span>{referenceImages.length} referentnih slika će biti uključeno u analizu</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
+
                 <div className="flex items-center justify-end gap-3 pt-2">
                     <div className="text-sm text-muted-foreground">
-                        Max ukupno: <span className="font-medium">{watch("globalMaxPoints")}</span>
+                        Max ukupno: <span className="font-medium">{globalMaxPoints}</span>
                     </div>
                     <Button type="submit" disabled={saving || uploadedImages.length === 0} className="gap-2">
-                        <Settings2 className="h-4 w-4" /> {saving ? "Spremam..." : "Predaj na ocjenjivanje"}
+                        {saving ? (
+                            <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Ocjenjujem...
+                            </>
+                        ) : (
+                            <>
+                                <Settings2 className="h-4 w-4" />
+                                Predaj na ocjenjivanje
+                            </>
+                        )}
                     </Button>
                 </div>
             </form>
@@ -465,9 +738,37 @@ function RubricForm() {
     );
 }
 
-
-// ——— Main screen ———
 export default function AppGraderStudio() {
+    const [referenceImages, setReferenceImages] = useState<UploadedImage[]>([]);
+    const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
+
+    const handleGradingComplete = (result: GradingResult) => {
+        setGradingResult(result);
+    };
+
+    const handleReset = () => {
+        setGradingResult(null);
+        setReferenceImages([]);
+    };
+
+    if (gradingResult) {
+        return (
+            <div className="min-h-screen bg-background text-foreground p-4 md:p-8">
+                <div className="mx-auto max-w-5xl space-y-6">
+                    <header className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-bold">Rezultati ocjenjivanja</h1>
+                            <p className="text-sm text-muted-foreground">
+                                Ocjenjeno: {new Date(gradingResult.timestamp).toLocaleString('hr-HR')}
+                            </p>
+                        </div>
+                    </header>
+                    <GradingResultsDisplay result={gradingResult} onReset={handleReset} />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen bg-background text-foreground p-4 md:p-8">
             <div className="mx-auto max-w-5xl space-y-6">
@@ -485,11 +786,14 @@ export default function AppGraderStudio() {
                     </TabsList>
 
                     <TabsContent value="templates">
-                        <ExamTemplateForm />
+                        <ExamTemplateForm onImagesChange={setReferenceImages} />
                     </TabsContent>
 
                     <TabsContent value="rubric">
-                        <RubricForm />
+                        <RubricForm 
+                            referenceImages={referenceImages} 
+                            onGradingComplete={handleGradingComplete} 
+                        />
                     </TabsContent>
                 </Tabs>
             </div>
