@@ -1,4 +1,3 @@
-import './App.css'
 import AppGraderStudio from "./AppGraderStudio.tsx";
 
 function App() {

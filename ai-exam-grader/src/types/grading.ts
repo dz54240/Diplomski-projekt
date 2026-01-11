@@ -1,3 +1,9 @@
+export interface UploadedImage {
+  id: string;
+  file: File;
+  preview: string;
+}
+
 export interface GradingCriterion {
   id: string;
   criterion: string;
@@ -25,52 +31,53 @@ export interface GradingRequest {
 }
 
 export interface ExtractedTask {
-  task_number: number;
-  task_text: string;
-  student_answer: string;
+  taskNumber: number;
+  taskText: string;
+  studentAnswer: string;
 }
 
 export interface ExtractionResult {
   tasks: ExtractedTask[];
-  total_tasks_detected: number;
-  unreadable_sections: string[];
-  extraction_confidence: "high" | "medium" | "low";
+  totalTasksDetected: number;
+  unreadableSections: string[];
+  extractionConfidence: "high" | "medium" | "low";
 }
 
 export interface CriterionGrade {
-  criterion_id: string;
-  criterion_name: string;
-  awarded_points: number;
-  max_points: number;
+  criterionId: string;
+  criterionName: string;
+  awardedPoints: number;
+  maxPoints: number;
   justification: string;
   strengths: string[];
   improvements: string[];
 }
 
 export interface TaskGrade {
-  task_number: number;
-  task_text: string;
-  student_answer: string;
+  taskNumber: number;
+  taskText: string;
+  studentAnswer: string;
   analysis: string;
-  criterion_grades: CriterionGrade[];
-  total_points: number;
-  max_points: number;
+  criterionGrades: CriterionGrade[];
+  totalPoints: number;
+  maxPoints: number;
   percentage: number;
-  feedback_summary: string;
+  feedbackSummary: string;
 }
 
 export interface GradingResult {
-  grading_id: string;
+  gradingId: string;
   timestamp: string;
-  model_used: string;
+  modelUsed: string;
+  processingTimeMs?: number;
   extraction: ExtractionResult;
-  task_grades: TaskGrade[];
-  total_points: number;
-  max_total_points: number;
-  overall_percentage: number;
-  overall_feedback: string;
+  taskGrades: TaskGrade[];
+  totalPoints: number;
+  maxTotalPoints: number;
+  overallPercentage: number;
+  overallFeedback: string;
   status: "success" | "partial" | "error";
-  error_message?: string;
+  errorMessage?: string;
 }
 
 export interface APIResponse<T> {

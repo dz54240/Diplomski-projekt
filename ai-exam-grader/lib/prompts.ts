@@ -56,42 +56,42 @@ Imaš direktan pristup originalnim slikama tijekom ocjenjivanja, što ti omoguć
   "extraction": {
     "tasks": [
       {
-        "task_number": 1,
-        "task_text": "Tekst zadatka (printani dio)",
-        "student_answer": "Studentov odgovor (rukom pisani dio)"
+        "taskNumber": 1,
+        "taskText": "Tekst zadatka (printani dio)",
+        "studentAnswer": "Studentov odgovor (rukom pisani dio)"
       }
     ],
-    "total_tasks_detected": 1,
-    "unreadable_sections": [],
-    "extraction_confidence": "high"
+    "totalTasksDetected": 1,
+    "unreadableSections": [],
+    "extractionConfidence": "high"
   },
-  "task_grades": [
+  "taskGrades": [
     {
-      "task_number": 1,
-      "task_text": "Tekst zadatka",
-      "student_answer": "Studentov odgovor",
+      "taskNumber": 1,
+      "taskText": "Tekst zadatka",
+      "studentAnswer": "Studentov odgovor",
       "analysis": "Detaljna analiza što je student napravio",
-      "criterion_grades": [
+      "criterionGrades": [
         {
-          "criterion_id": "id-iz-rubrike",
-          "criterion_name": "Naziv kriterija",
-          "awarded_points": 4,
-          "max_points": 5,
+          "criterionId": "id-iz-rubrike",
+          "criterionName": "Naziv kriterija",
+          "awardedPoints": 4,
+          "maxPoints": 5,
           "justification": "Obrazloženje dodijeljenih bodova",
           "strengths": ["Što je dobro napravljeno"],
           "improvements": ["Što bi moglo biti bolje"]
         }
       ],
-      "total_points": 4,
-      "max_points": 5,
+      "totalPoints": 4,
+      "maxPoints": 5,
       "percentage": 80,
-      "feedback_summary": "Kratki sažetak povratne informacije"
+      "feedbackSummary": "Kratki sažetak povratne informacije"
     }
   ],
-  "total_points": 4,
-  "max_total_points": 5,
-  "overall_percentage": 80,
-  "overall_feedback": "Završni komentar o cijelom ispitu"
+  "totalPoints": 4,
+  "maxTotalPoints": 5,
+  "overallPercentage": 80,
+  "overallFeedback": "Završni komentar o cijelom ispitu"
 }
 
 ## VAŽNE NAPOMENE
